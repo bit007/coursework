@@ -7,11 +7,9 @@ The New York City Taxi & Limousine Commission (TLC) has provided a dataset of tr
 
 The records include fields capturing pick-up and drop-off dates/times, pick-up and drop-off locations (location coordinates of the starting and ending points), trip distances, itemized fares, rate types, payment types, driver-reported passenger counts etc. The data used was collected and provided to the NYC Taxi and Limousine Commission (TLC) by technology providers authorized under the Taxicab & Livery Passenger Enhancement Programs (TPEP/LPEP). You can download the data dictionary below.
 
-Data Dictionary for Taxi Datasetfile_download	Download
+Data Dictionary for Taxi Dataset
 This dataset was created by aggregating the aforementioned records. It provides precise location coordinates for where the trip started and ended, timestamps for when the trip started and ended, plus a few other variables including fare amount, payment method, and distance travelled.
 
-
-Fig1:Taxi_Grid
 The purpose of this dataset is to get a better understanding of the taxi system so that the city of New York can improve the efficiency of in-city commutes. Several exploratory questions can be asked about the travelling experience for passengers.
 
  
@@ -72,14 +70,14 @@ SET hive.exec.max.dynamic.partitions.pernode=100000;
 Analysis-I
 
 Compare the overall average fare per trip for November and December.
-Explore the ‘number of passengers per trip’ - how many trips are made by each level of ‘Passenger_count’? Do most people travel solo or with other people?
+Explore the â€˜number of passengers per tripâ€™ - how many trips are made by each level of â€˜Passenger_countâ€™? Do most people travel solo or with other people?
 Which is the most preferred mode of payment?
-What is the average tip paid per trip? Compare the average tip with the 25th, 50th and 75th percentiles and comment whether the ‘average tip’ is a representative statistic (of the central tendency) of ‘tip amount paid’. Hint: You may use percentile_approx(DOUBLE col, p): Returns an approximate pth percentile of a numeric column (including floating point types) in the group.
-Explore the ‘Extra’ (charge) variable - what fraction of total trips have an extra charge is levied?
+What is the average tip paid per trip? Compare the average tip with the 25th, 50th and 75th percentiles and comment whether the â€˜average tipâ€™ is a representative statistic (of the central tendency) of â€˜tip amount paidâ€™. Hint: You may use percentile_approx(DOUBLE col, p): Returns an approximate pth percentile of a numeric column (including floating point types) in the group.
+Explore the â€˜Extraâ€™ (charge) variable - what fraction of total trips have an extra charge is levied?
 
 Analysis-II
 
 What is the correlation between the number of passengers on any given trip, and the tip paid per trip? Do multiple travellers tip more compared to solo travellers? Hint: Use CORR(Col_1, Col_2)
-Segregate the data into five segments of ‘tip paid’: [0-5), [5-10), [10-15) , [15-20) and >=20. Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
-Which month has a greater average ‘speed’ - November or December? Note that the variable ‘speed’ will have to be derived from other metrics. Hint: You have columns for distance and time.
-Analyse the average speed of the most happening days of the year, i.e. 31st December (New year’s eve) and 25th December (Christmas) and compare it with the overall average. 
+Segregate the data into five segments of â€˜tip paidâ€™: [0-5), [5-10), [10-15) , [15-20) and >=20. Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+Which month has a greater average â€˜speedâ€™ - November or December? Note that the variable â€˜speedâ€™ will have to be derived from other metrics. Hint: You have columns for distance and time.
+Analyse the average speed of the most happening days of the year, i.e. 31st December (New yearâ€™s eve) and 25th December (Christmas) and compare it with the overall average. 
