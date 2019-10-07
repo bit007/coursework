@@ -1,0 +1,469 @@
+
+
+-- IMPORTANT BEFORE CREATING ANY TABLE, MAKE SURE YOU RUN THIS COMMAND 
+ADD JAR optclouderaparcelsCDHlibhivelibhive-hcatalog-core-1.1.0-cdh5.11.2.jar;
+
+
+-- PARTITION THE DATA  
+-- IMPORTANT BEFORE PARTITIONING ANY TABLE, MAKE SURE YOU RUN THESE COMMANDS 
+SET hive.exec.max.dynamic.partitions=100000;
+SET hive.exec.max.dynamic.partitions.pernode=100000;
+
+
+-- Creating a new database
+-- create database if not exists  hive_assignment_taxicab;
+-- use  hive_assignment_taxicab;
+
+
+
+-- 1. Loading the data ##################################################################################################################################################
+
+-- Creating the initial staging table as external hive table where we would just take data from HDFS location and analyze it.
+
+CREATE EXTERNAL TABLE IF NOT EXISTS hive_assignment_taxicab.staging_taxifare
+(VendorID int, tpep_pickup_datetime string, tpep_dropoff_datetime string,
+passenger_count int, trip_distance double,RatecodeID int, store_and_fwd_flag string, PULocationID int, DOLocationID int,
+payment_type int, fare_amount double, extra double, mta_tax double, tip_amount double, tolls_amount double,
+improvement_surcharge double, total_amount double)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION 'common_foldernyc_taxi_data'
+tblproperties (skip.header.line.count=1);
+
+-- we are skipping inital row as there is header data in the file. Taking the data types of the columns based what is given in data dictionary.
+
+-- Validating the dataset
+select count() from hive_assignment_taxicab.staging_taxifare;
+-- 1174569
+
+select  from hive_assignment_taxicab.staging_taxifare limit 10;
+
+
+-- 2. Basic Data Quality Checks ##################################################################################################################################################
+
+
+-- Checking for nulls
+select sum(case when 	VendorID 	 is null then 1 else 0 end) 	VendorID 	,
+sum(case when 	tpep_pickup_datetime 	 is null then 1 else 0 end) 	tpep_pickup_datetime 	,
+sum(case when 	tpep_dropoff_datetime 	 is null then 1 else 0 end) 	tpep_dropoff_datetime 	,
+sum(case when 	passenger_count 	 is null then 1 else 0 end) 	passenger_count 	,
+sum(case when 	trip_distance 	 is null then 1 else 0 end) 	trip_distance 	,
+sum(case when 	RatecodeID 	 is null then 1 else 0 end) 	RatecodeID 	,
+sum(case when 	store_and_fwd_flag 	 is null then 1 else 0 end) 	store_and_fwd_flag 	,
+sum(case when 	PULocationID 	 is null then 1 else 0 end) 	PULocationID 	,
+sum(case when 	DOLocationID 	 is null then 1 else 0 end) 	DOLocationID 	,
+sum(case when 	payment_type 	 is null then 1 else 0 end) 	payment_type 	,
+sum(case when 	fare_amount 	 is null then 1 else 0 end) 	fare_amount 	,
+sum(case when 	extra 	 is null then 1 else 0 end) 	extra 	,
+sum(case when 	mta_tax 	 is null then 1 else 0 end) 	mta_tax 	,
+sum(case when 	tip_amount 	 is null then 1 else 0 end) 	tip_amount 	,
+sum(case when 	tolls_amount 	 is null then 1 else 0 end) 	tolls_amount 	,
+sum(case when 	improvement_surcharge 	 is null then 1 else 0 end) 	improvement_surcharge 	,
+sum(case when 	total_amount 	 is null then 1 else 0 end) 	total_amount 	
+from hive_assignment_taxicab.staging_taxifare;
+
+-- We dont have any nulls.
+
+--How many records has each TPEP provider provided Write a query that summarises the number of records of each provider.
+
+select vendorid, count() as num_records from hive_assignment_taxicab.staging_taxifare group by vendorid order by vendorid;
+-- 1 527386
+-- 2 647183
+
+
+
+--The data provided is for months November and December only. Check whether the data is consistent, and if not, identify the data quality issues. Mention all data quality issues in comments.
+
+-- Checking for valid timestamps
+
+SELECT count() as num_records FROM hive_assignment_taxicab.staging_taxifare
+where unix_timestamp(tpep_pickup_datetime)  unix_timestamp(tpep_dropoff_datetime);
+-- We can ignore 73 records out of ~1.17 million records.
+
+-- Checking for pickup datetime
+
+select  year(tpep_pickup_datetime)as Pickup_Year, month(tpep_pickup_datetime)as Pickup_Month, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by year(tpep_pickup_datetime), month(tpep_pickup_datetime) 
+order by Pickup_Year, Pickup_Month;
+
+-- We will take data only for pickup year = 2017 and month = 11 and 12. Ignore all other years and months.
+-- We will not consider any other month in the pickup. 
+-- There can be some records where pickup in October 31st night and drop was in november i.e on 1st. We shall not consider such records.
+-- We would only take records based on pickup time which lies in Nov and Dec. As for dropoff time it can go for January as well (for 31st night pickups and drops for 1st January).
+-- we shall assume that if pickup time is for a particular day than that entire trip is getting counted for that day irrespective of drop off time.
+
+
+-- Dropoff Datetime
+
+select  year(tpep_dropoff_datetime)as Dropoff_Year, month(tpep_dropoff_datetime)as Dropoff_Month, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by year(tpep_dropoff_datetime), month(tpep_dropoff_datetime)
+order by Dropoff_Year, Dropoff_Month;
+
+-- We would consider dropoff year = 2017, month = 11 and 12 and dropoff year = 2018 and month = 1 in our analysis as the trips which might have started on 31st dec 2017 night 
+-- and ended after the data was changed (drop off for 1st Jan 2018). Rest all data we can ignore. 
+
+-- Checking for records with inconsistent pickup dates per vendorid
+
+select  year(tpep_pickup_datetime)as Pickup_Year, month(tpep_pickup_datetime)as Pickup_Month, vendorid, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by  year(tpep_pickup_datetime), month(tpep_pickup_datetime), vendorid
+order by  Pickup_Year, Pickup_Month, vendorid;
+
+-- It seems vendorid=1 is doing better job here. But inconsistent records for vendorid=2 are almost negligible.
+
+-- Checking same for dropoff time
+select  year(tpep_dropoff_datetime)as Dropoff_Year, month(tpep_dropoff_datetime)as Dropoff_Month, vendorid, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by  year(tpep_dropoff_datetime), month(tpep_dropoff_datetime), vendorid
+order by  Dropoff_Year, Dropoff_Month, vendorid;
+
+-- Almost same performance by both vendors.
+
+-- Checking for inconsistent pick up and drop off time
+select count() as num_trips, vendorid
+from hive_assignment_taxicab.staging_taxifare
+where unix_timestamp(tpep_pickup_datetime) = unix_timestamp(tpep_dropoff_datetime)
+group by vendorid; 
+
+-- vendorid=1 seems to be doing a bad job. It has more inconsistent records for pickup and dropoff times.
+
+-- Checking for  passenger_count per vendorid
+select  passenger_count, vendorid, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by passenger_count, vendorid order by passenger_count, vendorid;
+
+-- We can see vendorid = 1 is doing a bad job for passenger_count as there are high number of records with 0 passenger count (6.8k vs 11 for vendorid=2). 
+-- Since these are limousine we would assume it can fit 9 people as well as we can see a few rides having maximum passenger count as 9.
+
+-- Checking for ratecodeid
+select  ratecodeid, vendorid, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by ratecodeid, vendorid order by ratecodeid, vendorid;
+
+-- We are getting a few records for ratecodeid=99 which is not a valid ratecode based on data dictonary. Again these record count are higher for vendorid=1.
+
+-- Checking for store_and_fwd_flag
+select  store_and_fwd_flag, vendorid, count() as num_records 
+from hive_assignment_taxicab.staging_taxifare
+group by store_and_fwd_flag, vendorid order by store_and_fwd_flag, vendorid;
+
+-- All records seems to be valid.
+
+-- Checking for trip_distances
+
+select  min(trip_distance) as min_trip_distance, max(trip_distance) as max_trip_distance, round(avg(trip_distance),2) as avg_trip_distance,
+round(percentile_approx(trip_distance, 0.03),2) as extreme_left, round(percentile_approx(trip_distance, 0.25),2) as 25th_percentile, 
+round(percentile_approx(trip_distance, 0.75),2) as 75th_percentile, round(percentile_approx(trip_distance, 0.97),2) as extreme_right, vendorid 
+from hive_assignment_taxicab.staging_taxifare
+group by  vendorid;
+
+-- We can clearly see that there are some trips in the datasets as maximum trip distance which is way higher than what lies in 97th percentile range.
+-- There are trips with 0 trip_distance. We would only use trips with trip_distance  0. Lets see how many such trips are there for each vendor.
+
+select  count() as num_trips, vendorid 
+from hive_assignment_taxicab.staging_taxifare
+where trip_distance = 0
+group by  vendorid;
+
+-- We can see that the trip_distance=0 count is higher for vendorid=1.
+
+-- Checking pickup locations and dropoff locations
+select  count(distinct pulocationid) as pickup_locations, count(distinct dolocationid) as dropoff_locations
+from hive_assignment_taxicab.staging_taxifare;
+
+-- 246 distinct pickup locations
+-- 260 distinct drop off locations
+
+-- Checking for payment_type 
+
+select count() as num_trips, payment_type,vendorid
+from hive_assignment_taxicab.staging_taxifare
+group by payment_type, vendorid
+order by payment_type, vendorid;
+
+-- We can see that trips with no charge and disputes are higher for vendorid=1.
+
+-- Checking for extra
+-- This can take only 3 values i.e. 0, 0.5 and 1 based on data dictionary.
+
+select count() as num_trips, vendorid
+from hive_assignment_taxicab.staging_taxifare
+where extra not in (0,0.5,1)
+group by vendorid;
+-- Here vendorid=2 have more number of trips charging extra which is not per standard. We would ignore all these records as this is very small fraction of total dataset.
+
+-- Checking for mta_tax
+-- this can take only 1 value = .5
+select count() as num_trips, vendorid
+from hive_assignment_taxicab.staging_taxifare
+where mta_tax !=0.5
+group by vendorid;
+-- Here also vendorid 2 is having more records than vendorid =1 which is not per standard. However the difference isn't significantly high.
+
+-- Tip Amount
+-- 
+select min(tip_amount), max(tip_amount), avg(tip_amount)
+from hive_assignment_taxicab.staging_taxifare;
+-- There are few records where tip amount is negative. We would ignore all such records. 
+
+-- Checking for tips which are  0 and payment_type is not credit card. We would only consider tips for payment type credit card.
+select count() as num_trips, payment_type
+from hive_assignment_taxicab.staging_taxifare
+where payment_type !=1 and tip_amount != 0
+group by payment_type;
+
+-- We can see that we are getting a few records where tips are given and payment type was no charge or dispute. We would ignore these records.
+
+-- Improvement Surcharge
+--
+select min(improvement_surcharge), max(improvement_surcharge), avg(improvement_surcharge)
+from hive_assignment_taxicab.staging_taxifare;
+
+-- We are getting varying values of improvement_surcharge. But valid value is 0 or 0.3 only.
+
+select count() as num_trips, vendorid
+from hive_assignment_taxicab.staging_taxifare
+where improvement_surcharge not in (0.3, 0)
+group by vendorid;
+
+-- vendorid=2 have some inconsistent records.
+
+-- Checking for Tolls Amount
+
+select min(tolls_amount), max(tolls_amount), avg(tolls_amount)
+from hive_assignment_taxicab.staging_taxifare;
+
+-- Tolls amount are coming as negative as well. We shall treat them as inconsistency. There are huge tolls as well as avg and max has very large difference. These can attribute to a few trips which were for longer distances.
+
+
+-- Total Amount
+
+select min(total_amount), max(total_amount), avg(total_amount)
+from hive_assignment_taxicab.staging_taxifare;
+
+-- We can see minimum total amount is less than 0.
+
+
+select count() as num_trips, payment_type, vendorid
+from hive_assignment_taxicab.staging_taxifare
+where total_amount =0
+group by  payment_type, vendorid
+order by payment_type, vendorid;
+
+-- These records can be ignored as total amount should not be less than 0.
+
+-- Fare Amount
+select min(fare_amount), max(fare_amount), avg(fare_amount)
+from hive_assignment_taxicab.staging_taxifare;
+
+-- We can see minimum fare amount is less than 0.
+
+select count() as num_trips, payment_type
+from hive_assignment_taxicab.staging_taxifare
+where fare_amount =0
+group by  payment_type;
+
+-- These records can be ignored as the fare amount should not be less than 0.
+
+-- These are all the data quality check. Based on above we can say that vendorid=1 is doing a bad job for providing the dataset.
+
+
+
+-- 3. Partitioned orc table. ###################################################################################################
+
+-- Creating external partitioned table. We would partiton it based on month and day from pickup datetimes as we would be analysing the data based on day level or month levels.
+
+CREATE EXTERNAL TABLE IF NOT EXISTS hive_assignment_taxicab.taxifare_partitioned_orc
+(VendorID int, tpep_pickup_datetime string, tpep_dropoff_datetime string,
+passenger_count int, trip_distance double,RatecodeID int, store_and_fwd_flag string, PULocationID int, DOLocationID int,
+payment_type int, fare_amount double, extra double, mta_tax double, tip_amount double, tolls_amount double,
+improvement_surcharge double, total_amount double) PARTITIONED BY (month int, day int)
+STORED AS orc
+LOCATION 'userarihant29101991_gmaildatasetsnyc_taxi_dataset'
+TBLPROPERTIES (orc.compress = SNAPPY);
+
+
+-- Loading the data in the above created table.
+
+INSERT OVERWRITE TABLE hive_assignment_taxicab.taxifare_partitioned_orc PARTITION(month, day)
+select VendorID, tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance, RatecodeID, store_and_fwd_flag,
+PULocationID, DOLocationID, payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount,
+improvement_surcharge, total_amount, month(tpep_pickup_datetime)as month, day(tpep_pickup_datetime)as day
+from hive_assignment_taxicab.staging_taxifare
+where unix_timestamp(tpep_pickup_datetime)  unix_timestamp(tpep_dropoff_datetime)
+and year(tpep_pickup_datetime)=2017 and month(tpep_pickup_datetime) in (11,12)
+and passenger_count  0
+and trip_distance  0
+and RatecodeID in (1,2,3,4,5,6)
+and payment_type in (1,2,3,4,5,6)
+and fare_amount  0
+and mta_tax = 0.5
+and extra in (0,0.5,1)
+and tip_amount = 0
+and tolls_amount =0
+and improvement_surcharge in (0,0.3)
+and total_amount  0;
+
+-- All above filter conditions are based on earlier assumptions and data quality checks.
+
+select count() from hive_assignment_taxicab.taxifare_partitioned_orc;
+-- 1150146
+-- We can see that a total of 1174569 - 1150146= 24423 records got removed. Which is 2% of the original dataset.  
+
+
+-- 4. Analysis 1. ###############################################################################################################################################
+
+-- 4.1. Compare the overall average fare per trip for November and December.
+select `month`, 
+round(avg(fare_amount),2) as avg_fare, 
+round(avg(total_amount),2) avg_total, 
+round(avg(total_amount) - avg(fare_amount),2) as avg_difference
+from hive_assignment_taxicab.taxifare_partitioned_orc
+group by `month`;
+
+-- Nov. avg fare ~ $12.73 where as for Dec. avg. fare ~ $12.53. Difference between  average total amount and average fare amount is slightly higher for Nov.
+
+
+-- 4.2. Explore the ‘number of passengers per trip’ - how many trips are made by each level of ‘Passenger_count’ Do most people travel solo or with other people
+
+select passenger_count, count() as num_trips
+from hive_assignment_taxicab.taxifare_partitioned_orc
+group by passenger_count;
+
+-- We can see that about 814709 trips out of 1150146 trips are by solo passengers which is approximately 70.84% of total trips. Hence we can say that most people travel solo.
+
+
+-- 4.3. Which is the most preferred mode of payment
+
+select payment_type, 
+case 
+when payment_type = 1 then 'Credit Card'
+when payment_type = 2 then 'Cash'
+when payment_type = 3 then 'No Charge'
+when payment_type = 4 then 'Dispute'
+when payment_type = 5 then 'Unknown'
+else 'Voided Trip' end as payment_mode_desc,
+count() as num_trips
+from hive_assignment_taxicab.taxifare_partitioned_orc
+group by payment_type;
+
+-- We can see that Credit Card is the most preferred mode of payment. Used for 776541 trips out of 1150146 trips total.
+
+-- 4.4. What is the average tip paid per trip Compare the average tip with the 25th, 50th and 75th percentiles and comment whether the ‘average tip’ is a representative statistic (of the central tendency) of ‘tip amount paid’. Hint You may use percentile_approx(DOUBLE col, p) Returns an approximate pth percentile of a numeric column (including floating point types) in the group.
+
+select round(avg(tip_amount),2) as average_tip, 
+min(tip_amount) as min_tip,
+max(tip_amount) as max_tip,
+round(percentile_approx(tip_amount,0.05),2) as tip_5_percentile,
+round(percentile_approx(tip_amount,0.25),2) as tip_25_percentile, 
+round(percentile_approx(tip_amount,0.50),2) as tip_50_percentile, 
+round(percentile_approx(tip_amount,0.75),2) as tip_75_percentile, 
+round(percentile_approx(tip_amount,0.95),2) as tip_95_percentile
+from hive_assignment_taxicab.taxifare_partitioned_orc
+where payment_type = 1;
+
+
+-- We are considering tips for credit card payment as per data dictionary. Hence the filter condition for payment_type = 1.
+-- From above query we can see that maximum tip is way higher than what lies between 75th to 95th percentile. Hence due to these higher tips average tip is slightly skewed
+-- towards the right side of the distribution. So, we can say that average tip is not representative of central tendency due to skewness. Tip at 50th percentile is a better 
+-- measure of central tendency of the distribution.
+
+
+-- 4.5. Explore the ‘Extra’ (charge) variable - what fraction of total trips have an extra charge is levied
+
+SELECT count() as num_trips, 
+sum(CASE when extra != 0 THEN 1 ELSE 0 END)as num_trips_extra_charge,
+round(sum(CASE when extra != 0 THEN 1 ELSE 0 END)count()100, 2) as fraction_extra_charge
+from hive_assignment_taxicab.taxifare_partitioned_orc;
+
+-- Approximately 46.23% of total trips have extra charges (531697 out of 1150146).
+
+
+-- 5. Analysis 2. ###############################################################################################################################################
+
+
+-- 5.1. What is the correlation between the number of passengers on any given trip, and the tip paid per trip Do multiple travellers tip more compared to solo travellers Hint Use CORR(Col_1, Col_2)
+
+
+select round(corr(passenger_count, tip_amount),4) as passenger_tip_corr, 
+round(avg(CASE when passenger_count=1 then tip_amount else null end),2) as solo_passenger_tip,
+round(avg(CASE when passenger_count1 then tip_amount else null end),2) as multiple_passenger_tip
+from hive_assignment_taxicab.taxifare_partitioned_orc
+where payment_type = 1;
+
+-- Considering tips for credit_card payment only. Hence filter condition payment_type=1.
+-- We can see that there is very weak corelation between passenger count and tip amount ~0.008. 
+--Average tip for multiple passengers ($2.72) are slightly higher than solo passenger($2.65)..
+-- But due to this weak corelation we cannot say that having more passenger tend to get more tips, as we cannot imply a direct corelation.
+
+
+
+-- 5.2 Segregate the data into five segments of ‘tip paid’ [0-5), [5-10), [10-15) , [15-20) and =20. Calculate the percentage share of each bucket (i.e. the fraction of trips falling in each bucket).
+
+
+select round(sum(case when tip_amount = 5 then 1 else 0 end)  count()  100, 3) as frac_0_to_5_tip_bucket ,
+round(sum(case when tip_amount  5 and tip_amount = 10 then 1 else 0 end)  count()  100, 3) as frac_5_to_10_tip_bucket ,
+round(sum(case when tip_amount  10 and tip_amount = 15 then 1 else 0 end)  count()  100, 3) as frac_10_to_15_tip_bucket,
+round(sum(case when tip_amount  15 and tip_amount = 20 then 1 else 0 end)  count()  100, 3) as frac_15_to_20_tip_bucket ,
+round(sum(case when tip_amount = 20 then 1 else 0 end)  count()   100 ,3) as frac_above20_tip_bucket
+from hive_assignment_taxicab.taxifare_partitioned_orc
+where payment_type = 1;
+
+-- Considering tips for credit_card payment only. Hence filter condition payment_type=1 
+-- Approximately 90% of tip_amount given lies between [0,5) dollars. 
+-- Approximately 7.56% of tip_amount given lies between [5,10) dollars.
+-- Approximately 2.16% of tip_amount given lies between [10,15) dollars.
+-- Approximately 0.16% of tip_amount given lies between [15,20) dollars.
+-- Approximately 0.08% of tip_amount given is = 20 dollars. 
+
+
+--5.3 Which month has a greater average ‘speed’ - November or December Note that the variable ‘speed’ will have to be derived from other metrics. Hint You have columns for distance and time.
+
+-- Calculating average speed as average of trip distance over trip duration.
+
+select `month`, 
+case 
+when `month` = 11 then 'November'
+when `month` = 12 then 'December'
+else null end as month_desc,
+round(avg(trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )3600)) ,2) as avg_speed
+from hive_assignment_taxicab.taxifare_partitioned_orc
+group by `month`;
+
+-- Average speed in December (10.99 mph)is slightly higher than in November(10.89 mph). This is consistent with above analysis of total_amount being higher in Nov.
+
+
+--5.4 Analyse the average speed of the most happening days of the year, i.e. 31st December (New year’s eve) and 25th December (Christmas) and compare it with the overall average. 
+
+-- Since we have partitioned data on day level we can use following individual queries to ger avg_speeds
+
+-- Overall average speed
+select avg(trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )3600)) as avg_speed
+from hive_assignment_taxicab.taxifare_partitioned_orc;
+-- 10.94 mph
+
+-- Average speed on 25th Dec
+select avg(trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )3600)) as christmas_avg_speed
+from hive_assignment_taxicab.taxifare_partitioned_orc
+where `month` = 12 and `day` = 25
+-- 15.05 mph
+
+-- Average speed on 31st Dec
+select avg(trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime) )3600)) as new_yr_eve_avg_speed
+from hive_assignment_taxicab.taxifare_partitioned_orc
+where `month` = 12 and `day` = 31
+-- 13.21 mph
+
+
+-- Single query
+
+SELECT round(avg(CASE when `month`=12 and `day`=25 THEN (trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))3600)) ELSE null end),2)as christmas_avg_speed, 
+round(avg(CASE when `month`=12 and `day`=31 THEN (trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))3600)) ELSE null end),2)as new_yr_eve_avg_speed, 
+round(avg(CASE when `month` in (11,12) THEN (trip_distance((unix_timestamp(tpep_dropoff_datetime)-unix_timestamp(tpep_pickup_datetime))3600)) ELSE null end),2)as avg_speed
+from hive_assignment_taxicab.taxifare_partitioned_orc;
+
+-- Christmas is having smoothest traffic. On christmas average speed is much higher than overall avg. for two months and monthly average calculated previously. 
+-- On new year's eve as well avg speed is higher than overall average and monthly average but lower than that of christmas.
+
+
